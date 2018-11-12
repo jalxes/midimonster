@@ -2,6 +2,8 @@
 #include "loopback.h"
 
 #define BACKEND_NAME "loopback"
+#define FLOW_UP "UP"
+#define FLOW_DOWN "DOWN"
 
 int init(){
 	backend loopback = {
@@ -13,6 +15,7 @@ int init(){
 		.handle = backend_set,
 		.process = backend_handle,
 		.start = backend_start,
+		.interval = backend_interval,
 		.shutdown = backend_shutdown
 	};
 
@@ -27,6 +30,10 @@ int init(){
 static int backend_configure(char* option, char* value){
 	//intentionally ignored
 	return 0;
+}
+
+static uint32_t backend_interval(){
+	return 2000;
 }
 
 static int backend_configure_instance(instance* inst, char* option, char* value){
@@ -50,40 +57,64 @@ static instance* backend_instance(){
 }
 
 static channel* backend_channel(instance* inst, char* spec){
-	size_t u;
-	loopback_instance* data = (loopback_instance*) inst->impl;
-
-	//find matching channel
-	for(u = 0; u < data->n; u++){
-		if(!strcmp(spec, data->name[u])){
-			break;
-		}
+	// loopback_instance* data = (loopback_instance*) inst->impl;
+    loopback_channel_ident ident;
+	if(!strncmp(spec, "up", 2)){
+		ident.label = (uint64_t) FLOW_UP;
+		return mm_channel(inst, (uint64_t) ident.label, 1);
+	}
+	
+	if(!strncmp(spec, "down", 4)){
+		ident.label = (uint64_t) FLOW_DOWN;
+		return mm_channel(inst, ident.label, 1);
 	}
 
-	//allocate new channel
-	if(u == data->n){
-		data->name = realloc(data->name, (u + 1) * sizeof(char*));
-		if(!data->name){
-			fprintf(stderr, "Failed to allocate memory\n");
-			return NULL;
-		}
-
-		data->name[u] = strdup(spec);
-		if(!data->name[u]){
-			fprintf(stderr, "Failed to allocate memory\n");
-			return NULL;
-		}
-		data->n++;
-	}
-
-	return mm_channel(inst, u, 1);
+	return NULL;
 }
 
 static int backend_set(instance* inst, size_t num, channel** c, channel_value* v){
-	size_t n;
-	for(n = 0; n < num; n++){
-		mm_channel_event(c[n], v[n]);
-	}
+	// size_t n;
+	// for(n = 0; n < num; n++){
+	// 	mm_channel_event(c[n], v[n]);
+	// }
+    size_t u;
+    int spin = (int)v->normalised;
+
+    if (spin > 0) {
+        spin = spin > 1  ? 15 : 5;
+    }
+
+
+	loopback_instance* data;
+    loopback_channel_ident ident;
+	channel_value val;
+	for(u = 0; u < num; u++){
+		
+        data = (loopback_instance*) c[u]->instance->impl;
+		ident.label = c[u]->ident;
+
+        if(ident.label == (uint64_t) FLOW_DOWN){
+            data->value = data->value + spin;   
+            if(data->value > 126){
+                data->value = 126;   
+            }
+        }
+        if(ident.label == (uint64_t) FLOW_UP){
+            data->value = data->value - spin;   
+            if(data->value < 1){
+                data->value = 1;
+            }
+        }
+        if(data->value > 1 & data->value < 126 ){
+            fprintf(stderr, "label %s\n", ident.label);
+            fprintf(stderr, "spin %d\n", spin);
+            fprintf(stderr, "value %3d\n", data->value);
+        }
+        
+        val.normalised = val.raw.u64 = (127 - data->value);
+
+        mm_channel_event(c[u], val);
+    }
 	return 0;
 }
 
